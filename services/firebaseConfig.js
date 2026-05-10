@@ -12,7 +12,7 @@ setLogLevel("silent"); // Tysta loggnivån
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  apiKey: "AIzaSyDfh94gHvxpHWlMq-8yzjp-2dfd-nXibjM",
   authDomain: "kudoo-36de9.firebaseapp.com",
   projectId: "kudoo-36de9",
   storageBucket: "kudoo-36de9.firebasestorage.app",
