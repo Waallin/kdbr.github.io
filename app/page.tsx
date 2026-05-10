@@ -48,6 +48,35 @@ function norm(s: string | undefined): string {
   return (s ?? "").trim().toUpperCase();
 }
 
+function genderCategory(g: string | undefined): "female" | "male" | "unknown" {
+  const n = norm(g);
+  if (!n) return "unknown";
+  const femaleExact = new Set([
+    "F",
+    "FEMALE",
+    "KVINNA",
+    "K",
+    "WOMAN",
+    "WOMEN",
+    "TJEJ",
+  ]);
+  const maleExact = new Set(["M", "MALE", "MAN", "MÄN", "MANNEN", "KILLE", "HERR"]);
+  if (femaleExact.has(n)) return "female";
+  if (maleExact.has(n)) return "male";
+  if (n.includes("KVINN") || n.includes("WOMAN") || n.includes("FEMALE")) return "female";
+  if (n.includes("MALE") && !n.includes("FEMALE")) return "male";
+  if (n.includes("MAN") && !n.includes("WOMAN") && !n.includes("KVINN")) return "male";
+  return "unknown";
+}
+
+function formatPercentOfTotal(count: number, total: number): string {
+  if (total === 0) return "—";
+  return new Intl.NumberFormat("sv-SE", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(count / total);
+}
+
 function isoOrMillisToMs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim()) {
@@ -249,6 +278,38 @@ function anyRevenueCatAccessLive(user: User, now: number): boolean {
   return userOnActiveTrial(user, now) || activeProductIds(user, now).size > 0;
 }
 
+/** Betalande prenumerant: aktiv RC-åtkomst men inte trial. */
+function userIsPremiumSubscriber(user: User, now: number): boolean {
+  return anyRevenueCatAccessLive(user, now) && !userOnActiveTrial(user, now);
+}
+
+type UserListFilter =
+  | "all"
+  | "trial"
+  | "premium"
+  | "weekly"
+  | "yearly"
+  | "inactive";
+
+function userMatchesListFilter(user: User, filter: UserListFilter, now: number): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "trial":
+      return userOnActiveTrial(user, now);
+    case "premium":
+      return userIsPremiumSubscriber(user, now);
+    case "weekly":
+      return liveWeeklySubscriptionNonTrial(user, now);
+    case "yearly":
+      return liveYearlySubscriptionNonTrial(user, now);
+    case "inactive":
+      return !anyRevenueCatAccessLive(user, now);
+    default:
+      return true;
+  }
+}
+
 function liveActiveSubscriptionLabels(user: User, now: number): string {
   const ids = activeProductIds(user, now);
   if (ids.size === 0) return "—";
@@ -305,12 +366,77 @@ function computeOverview(users: User[]) {
   const weeklyActive = users.filter((u) => liveWeeklySubscriptionNonTrial(u, now)).length;
   const yearlyActive = users.filter((u) => liveYearlySubscriptionNonTrial(u, now)).length;
 
+  let genderFemale = 0;
+  let genderMale = 0;
+  let genderUnknown = 0;
+  for (const u of users) {
+    const c = genderCategory(u.gender);
+    if (c === "female") genderFemale++;
+    else if (c === "male") genderMale++;
+    else genderUnknown++;
+  }
+
+  const currentYear = new Date(now).getFullYear();
+  const ages: number[] = [];
+  let ageUnknown = 0;
+  for (const u of users) {
+    if (typeof u.birthYear !== "number" || !Number.isFinite(u.birthYear)) {
+      ageUnknown++;
+      continue;
+    }
+    const age = currentYear - u.birthYear;
+    if (age < 0 || age > 120) {
+      ageUnknown++;
+      continue;
+    }
+    ages.push(age);
+  }
+
+  const ageMin = ages.length > 0 ? Math.min(...ages) : null;
+  const ageMax = ages.length > 0 ? Math.max(...ages) : null;
+
+  let ageMedian: number | null = null;
+  if (ages.length > 0) {
+    const sorted = [...ages].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    ageMedian =
+      sorted.length % 2 === 1 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
+  }
+
+  let ageBucketUnder18 = 0;
+  let ageBucket18_24 = 0;
+  let ageBucket25_34 = 0;
+  let ageBucket35_44 = 0;
+  let ageBucket45_54 = 0;
+  let ageBucket55Plus = 0;
+  for (const age of ages) {
+    if (age < 18) ageBucketUnder18++;
+    else if (age <= 24) ageBucket18_24++;
+    else if (age <= 34) ageBucket25_34++;
+    else if (age <= 44) ageBucket35_44++;
+    else if (age <= 54) ageBucket45_54++;
+    else ageBucket55Plus++;
+  }
+
   return {
     total,
     trialActive,
     weeklyActive,
     yearlyActive,
     newLast24h,
+    genderFemale,
+    genderMale,
+    genderUnknown,
+    ageMin,
+    ageMax,
+    ageMedian,
+    ageBucketUnder18,
+    ageBucket18_24,
+    ageBucket25_34,
+    ageBucket35_44,
+    ageBucket45_54,
+    ageBucket55Plus,
+    ageUnknown,
   };
 }
 
@@ -381,6 +507,95 @@ function OverviewStats({ users }: { users: User[] }) {
           value={String(o.newLast24h)}
           className="sm:max-lg:col-span-2 lg:col-span-1"
         />
+      </div>
+
+      <div className="mt-6 sm:mt-8">
+        <h3
+          className="mb-3 text-xs font-semibold uppercase tracking-wide text-app-muted"
+          style={{ letterSpacing: "0.05em" }}
+        >
+          Kön
+        </h3>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 sm:gap-3">
+          <StatTile
+            label="Kvinnor"
+            labelMobile="Kvinnor"
+            value={formatPercentOfTotal(o.genderFemale, o.total)}
+          />
+          <StatTile
+            label="Män"
+            labelMobile="Män"
+            value={formatPercentOfTotal(o.genderMale, o.total)}
+          />
+          <StatTile
+            label="Okänt / annat"
+            labelMobile="Okänt"
+            value={formatPercentOfTotal(o.genderUnknown, o.total)}
+          />
+        </div>
+      </div>
+
+      <div className="mt-6 sm:mt-8">
+        <h3
+          className="mb-3 text-xs font-semibold uppercase tracking-wide text-app-muted"
+          style={{ letterSpacing: "0.05em" }}
+        >
+          Ålder (födelseår)
+        </h3>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
+          <StatTile
+            label="Åldersspann"
+            labelMobile="Spann"
+            value={
+              o.ageMin != null && o.ageMax != null
+                ? `${o.ageMin}–${o.ageMax} år`
+                : "—"
+            }
+          />
+          <StatTile
+            label="Medianålder"
+            labelMobile="Median"
+            value={o.ageMedian != null ? `${o.ageMedian} år` : "—"}
+          />
+          <StatTile
+            label="Saknar / ogiltigt år"
+            labelMobile="Okänt år"
+            value={formatPercentOfTotal(o.ageUnknown, o.total)}
+          />
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-6 xl:gap-3">
+          <StatTile
+            label="Under 18 år"
+            labelMobile="< 18"
+            value={formatPercentOfTotal(o.ageBucketUnder18, o.total)}
+          />
+          <StatTile
+            label="18–24 år"
+            labelMobile="18–24"
+            value={formatPercentOfTotal(o.ageBucket18_24, o.total)}
+          />
+          <StatTile
+            label="25–34 år"
+            labelMobile="25–34"
+            value={formatPercentOfTotal(o.ageBucket25_34, o.total)}
+          />
+          <StatTile
+            label="35–44 år"
+            labelMobile="35–44"
+            value={formatPercentOfTotal(o.ageBucket35_44, o.total)}
+          />
+          <StatTile
+            label="45–54 år"
+            labelMobile="45–54"
+            value={formatPercentOfTotal(o.ageBucket45_54, o.total)}
+          />
+          <StatTile
+            label="55 år och upp"
+            labelMobile="55+"
+            value={formatPercentOfTotal(o.ageBucket55Plus, o.total)}
+            className="sm:max-xl:col-span-2 xl:col-span-1"
+          />
+        </div>
       </div>
     </div>
   );
@@ -684,6 +899,8 @@ function UserCard({ user }: { user: User }) {
 
 export default function Home() {
   const { users, fetchUsers } = useUsersStore();
+  const [listFilter, setListFilter] = useState<UserListFilter>("all");
+  const [showStats, setShowStats] = useState(false);
 
   const usersByCreatedDesc = useMemo(() => {
     return [...users].sort((a, b) => {
@@ -692,6 +909,11 @@ export default function Home() {
       return mb - ma;
     });
   }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    const now = Date.now();
+    return usersByCreatedDesc.filter((u) => userMatchesListFilter(u, listFilter, now));
+  }, [usersByCreatedDesc, listFilter]);
 
   useEffect(() => {
     void fetchUsers();
@@ -711,21 +933,60 @@ export default function Home() {
             <p className="text-sm text-app-muted">
               {users.length === 0
                 ? "Inga användare hittades i Firestore (collection: users)."
-                : `${users.length} användare`}
+                : listFilter === "all"
+                  ? `${users.length} användare`
+                  : `${filteredUsers.length} av ${users.length} användare`}
             </p>
+            {users.length > 0 ? (
+              <label className="mt-3 flex max-w-md flex-col gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-app-muted">
+                  Filtrera lista
+                </span>
+                <select
+                  value={listFilter}
+                  onChange={(e) => setListFilter(e.target.value as UserListFilter)}
+                  className="rounded-lg border border-app-border bg-app-surface px-3 py-2 text-sm text-app-text"
+                  style={{ boxShadow: "var(--app-shadow)" }}
+                >
+                  <option value="all">Alla</option>
+                  <option value="premium">Premium (betalande)</option>
+                  <option value="trial">Trial (aktiv)</option>
+                  <option value="weekly">Veckoprenumeration</option>
+                  <option value="yearly">Årsprenumeration</option>
+                  <option value="inactive">Ingen aktiv prenumeration</option>
+                </select>
+              </label>
+            ) : null}
           </div>
-          <ThemeToggle />
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-end">
+            {users.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowStats((v) => !v)}
+                aria-expanded={showStats}
+                className="rounded-lg border border-app-border bg-app-surface px-3 py-2 text-xs font-medium text-app-text"
+                style={{ boxShadow: "var(--app-shadow)" }}
+              >
+                {showStats ? "Dölj statistik" : "Visa statistik"}
+              </button>
+            ) : null}
+            <ThemeToggle />
+          </div>
         </header>
 
-        {users.length > 0 ? <OverviewStats users={users} /> : null}
+        {users.length > 0 && showStats ? (
+          <OverviewStats users={filteredUsers} />
+        ) : null}
 
-        {usersByCreatedDesc.length > 0 && (
+        {filteredUsers.length > 0 ? (
           <div className="flex flex-col gap-6">
-            {usersByCreatedDesc.map((user) => (
+            {filteredUsers.map((user) => (
               <UserCard key={user.id} user={user} />
             ))}
           </div>
-        )}
+        ) : users.length > 0 ? (
+          <p className="text-sm text-app-muted">Inga användare matchar filtret.</p>
+        ) : null}
       </main>
     </div>
   );
