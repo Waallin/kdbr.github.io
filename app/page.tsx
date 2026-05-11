@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { User, UserSubscriptionProduct } from "@/stores/useUsersStore";
 import { useUsersStore } from "@/stores/useUsersStore";
+import { getUserDays } from "@/services/firebase";
 
 function formatTimestamp(ts: unknown): string {
   if (ts == null) return "—";
@@ -683,8 +684,149 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
+function DayCheck({ label, done }: { label: string; done: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium"
+      style={{
+        background: done
+          ? "color-mix(in srgb, var(--app-primary) 12%, transparent)"
+          : "color-mix(in srgb, var(--app-muted) 10%, transparent)",
+        color: done ? "var(--app-primary)" : "var(--app-muted)",
+      }}
+    >
+      <span style={{ fontSize: "0.7rem" }}>{done ? "✓" : "✗"}</span>
+      {label}
+    </span>
+  );
+}
+
+function DaysDrawer({
+  open,
+  onClose,
+  days,
+}: {
+  open: boolean;
+  onClose: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  days: any[] | null;
+}) {
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity duration-300"
+        style={{
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? "auto" : "none",
+        }}
+        onClick={onClose}
+      />
+      <aside
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-app-bg transition-transform duration-300 ease-in-out sm:max-w-lg"
+        style={{
+          transform: open ? "translateX(0)" : "translateX(100%)",
+          boxShadow: open ? "-8px 0 30px rgba(0,0,0,.12)" : "none",
+        }}
+      >
+        <div className="flex items-center justify-between border-b border-app-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-app-text">Historik</h2>
+            {days && (
+              <p className="text-xs text-app-muted">
+                {days.length} {days.length === 1 ? "dag" : "dagar"}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-app-muted transition-colors hover:bg-app-hover hover:text-app-text"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {days === null ? (
+            <p className="text-sm text-app-muted">Laddar dagar…</p>
+          ) : days.length === 0 ? (
+            <p className="text-sm text-app-muted">Inga dagar registrerade.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {days.map((day) => {
+                const comp = day.completion ?? {};
+                const pts = day.points ?? {};
+                const prog = day.progress ?? {};
+                const w = day.weight ?? {};
+                const allDone = comp.steps && comp.water && comp.points;
+
+                return (
+                  <div
+                    key={day.id}
+                    className="overflow-hidden rounded-xl border border-app-border bg-app-surface"
+                    style={{ boxShadow: "var(--app-shadow)" }}
+                  >
+                    <div
+                      className="flex items-center justify-between px-4 py-2.5"
+                      style={{
+                        background: allDone
+                          ? "color-mix(in srgb, var(--app-primary) 8%, var(--app-surface))"
+                          : undefined,
+                      }}
+                    >
+                      <span className="text-sm font-semibold text-app-text">
+                        {day.dateKey ?? day.id}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <DayCheck label="Steg" done={!!comp.steps} />
+                        <DayCheck label="Vatten" done={!!comp.water} />
+                        <DayCheck label="Poäng" done={!!comp.points} />
+                      </div>
+                    </div>
+
+                    <div className="border-t border-app-border-subtle px-4 py-3">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-semibold tabular-nums text-app-primary">
+                          {pts.total ?? 0}
+                        </span>
+                        <span className="text-[11px] text-app-muted">poäng</span>
+                        <span className="text-[11px] text-app-muted">
+                          (bas {pts.base ?? 0} · bonus {pts.stepBonus ?? 0} · använt {pts.used ?? 0})
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-4 text-sm text-app-text">
+                        <span>
+                          <span className="font-medium tabular-nums">{prog.steps ?? 0}</span>
+                          <span className="ml-1 text-xs text-app-muted">steg</span>
+                        </span>
+                        <span>
+                          <span className="font-medium tabular-nums">{prog.water ?? 0}</span>
+                          <span className="ml-1 text-xs text-app-muted">vatten</span>
+                        </span>
+                        <span className="ml-auto text-xs text-app-muted">
+                          {w.logged && w.value != null ? `${w.value} kg` : "Ej vägd"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}
+
 function UserCard({ user }: { user: User }) {
   const [open, setOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [days, setDays] = useState<any[] | null>(null);
   const rc = user.revenuecat;
   const weekly = rc?.subscriptionsByProductIdentifier?.WEEKLY;
   const premium = rc?.entitlements?.active
@@ -713,7 +855,12 @@ function UserCard({ user }: { user: User }) {
     >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) {
+            getUserDays(user.id).then((days) => console.log(`Days for ${user.id}:`, days));
+          }
+          setOpen((v) => !v);
+        }}
         aria-expanded={open}
         aria-label={open ? "Visa mindre om användaren" : "Visa mer om användaren"}
         className="flex w-full cursor-pointer flex-col gap-3 border-b border-app-border-subtle bg-[color-mix(in_srgb,var(--app-surface)_88%,var(--app-bg))] px-5 py-4 text-left transition-colors hover:bg-app-hover"
@@ -764,6 +911,7 @@ function UserCard({ user }: { user: User }) {
       </button>
 
       {open && (
+        <>
         <div className="grid gap-8 p-5 sm:grid-cols-2">
           <Section title="Konto & aktivitet">
             <Row label="Senast aktiv" value={formatTimestamp(user.lastActiveAt)} />
@@ -892,7 +1040,32 @@ function UserCard({ user }: { user: User }) {
             )}
           </Section>
         </div>
+
+        <div className="border-t border-app-border-subtle px-5 py-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (!days) {
+                getUserDays(user.id).then((d) => {
+                  const sorted = [...d].sort((a, b) =>
+                    ((b as Record<string, string>).dateKey ?? "").localeCompare(
+                      (a as Record<string, string>).dateKey ?? "",
+                    ),
+                  );
+                  setDays(sorted);
+                });
+              }
+              setDrawerOpen(true);
+            }}
+            className="text-sm font-medium text-app-primary underline decoration-app-primary/35 underline-offset-2 transition-colors hover:decoration-app-primary"
+          >
+            Visa historik →
+          </button>
+        </div>
+        </>
       )}
+
+      <DaysDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} days={days} />
     </article>
   );
 }

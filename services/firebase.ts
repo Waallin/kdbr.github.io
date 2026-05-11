@@ -38,6 +38,17 @@ export const getDocuments = async (alias: string) => {
   }
 };
 
+export async function getUserDays(userId: string) {
+  try {
+    const colRef = collection(database, USERS_COLLECTION, userId, "days");
+    const snap = await getDocs(colRef);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (error) {
+    console.log(`Error getting days for user ${userId}:`, error);
+    return [];
+  }
+}
+
 export async function getUsers(): Promise<User[]> {
   try {
     const colRef = collection(database, USERS_COLLECTION);
