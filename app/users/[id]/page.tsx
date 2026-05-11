@@ -32,8 +32,8 @@ export default function UserDetailPage() {
   useEffect(() => {
     if (id) {
       getUserDays(id).then((d) => {
-        const sorted = [...d].sort((a, b) =>
-          (b.dateKey ?? "").localeCompare(a.dateKey ?? ""),
+        const sorted = [...(d as Record<string, unknown>[])].sort((a, b) =>
+          (String(b.dateKey ?? "")).localeCompare(String(a.dateKey ?? "")),
         );
         setDays(sorted);
       });
